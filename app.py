@@ -9,8 +9,8 @@ st.title("📊 AI-Powered NSE Stock Screener")
 
 st.sidebar.header("🔑 Credentials & Settings")
 groq_api_key = st.sidebar.text_input("Groq API Key", type="password", help="Enter your Groq Cloud API Key")
-# FIX: Updated to currently active Groq models to prevent the 400 Decommissioned error
-selected_model = st.sidebar.selectbox("LLM Brain", ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"])
+# Active, production-ready Groq model selections
+selected_model = st.sidebar.selectbox("LLM Brain", ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"])
 
 st.subheader("📁 Step 1: Provide Your Tickers")
 input_method = st.radio("Choose how to input your stocklist:", ["Upload CSV File", "Paste Symbols Text Box"])
@@ -63,13 +63,30 @@ if raw_symbols:
                     try:
                         stock = yf.Ticker(ticker)
                         info = stock.info
-                        name = info.get('longName', ticker)
-                        price = info.get('currentPrice', 'N/A')
-                        pe = info.get('trailingPE', 'N/A')
-                        forward_pe = info.get('forwardPE', 'N/A')
-                        debt_to_equity = info.get('debtToEquity', 'N/A')
-                        profit_margin = info.get('profitMargins', 'N/A')
-                        revenue_growth = info.get('revenueGrowth', 'N/A')
+                        
+                        # --- SMART FALLBACK FETCHING PIPELINE ---
+                        name = info.get('longName') or info.get('shortName') or ticker
+                        
+                        # Price fallback check
+                        price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose') or 'N/A'
+                        
+                        # P/E valuation fallback checks
+                        pe = info.get('trailingPE') or info.get('forwardPE') or 'N/A'
+                        forward_pe = info.get('forwardPE') or 'N/A'
+                        
+                        # Debt metric formatting fallback
+                        debt_to_equity = info.get('debtToEquity')
+                        if debt_to_equity is None:
+                            # Banks typically won't track standard industrial debt/equity
+                            debt_to_equity = "N/A (Banking Structure or Low Leverage)" if "bank" in str(name).lower() else "N/A"
+                        
+                        # Margin & Growth fallback handling
+                        profit_margin = info.get('profitMargins') or info.get('operatingMargins') or 'N/A'
+                        revenue_growth = info.get('revenueGrowth') or info.get('quarterlyRevenueGrowth') or 'N/A'
+                        
+                        # Convert float percentages to readable string displays
+                        if isinstance(profit_margin, float): profit_margin = f"{round(profit_margin * 100, 2)}%"
+                        if isinstance(revenue_growth, float): revenue_growth = f"{round(revenue_growth * 100, 2)}%"
                         
                         combined_stock_data += f"""
                         === STOCK: {name} ({ticker}) ===
@@ -90,13 +107,18 @@ if raw_symbols:
             if not groq_api_key:
                 st.error("🔑 Please provide a valid Groq API Key in the sidebar to run the AI Analysis.")
             else:
-                with st.spinner("Handing over the data to the Groq LLM brain..."):
+                with st.spinner("Handing over data to Groq LLM brain..."):
                     try:
                         client = Groq(api_key=groq_api_key)
                         prompt = f"""You are the Chief Investment Officer of a quantitative hedge fund. Analyze the raw financial data of these stocks and pick exactly ONE absolute "Best Buy" for a medium-term investment.\n\nHere is the raw stock data:\n{combined_stock_data}\n\nProvide your final analysis structured exactly like this:\n1. THE WINNER: [Stock Name]\n2. CORE INVESTMENT THESIS: [Explain exactly why its numbers beat the others in plain English]\n3. THE CRITICAL RISK: [The single biggest flaw or hidden trap in this winner's data]"""
                         
-                        completion = client.chat.completions.create(model=selected_model, messages=[{"role": "user", "content": prompt}], temperature=0.2)
+                        completion = client.chat.completions.create(
+                            model=selected_model, 
+                            messages=[{"role": "user", "content": prompt}], 
+                            temperature=0.2
+                        )
                         st.subheader("🏆 AI Chief Investment Officer Report")
+                        # Preserving the zero-index list property extraction fix
                         st.markdown(completion.choices[0].message.content)
                     except Exception as e:
                         st.error(f"Groq API Error: {str(e)}")
