@@ -25,11 +25,9 @@ if input_method == "Upload CSV File":
     uploaded_file = st.file_uploader("Upload stock list file:", type=None)
     if uploaded_file is not None:
         try:
-            # Safe defensive parsing block to handle file conversions cleanly
             text_data = uploaded_file.getvalue().decode("utf-8", errors="ignore")
             reader = csv.reader(io.StringIO(text_data))
             for row in reader:
-                # Explicit check verifying the row exists and has at least 3 columns
                 if row and len(row) >= 3:
                     sym = str(row[2]).strip().replace('"', '').upper()
                     if sym and sym not in ['SYMBOL', 'TICKER', 'NAME', '']:
@@ -55,13 +53,12 @@ if raw_symbols:
     else:
         if st.button("Activate Hybrid Quantum Engine 🚀"):
             combined_stock_data, progress_bar = "", st.progress(0)
-            # Use browser headers to mask cloud server nodes completely
             hdrs = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             
             with st.spinner("Executing Technical & Fundamental Fusion Scan..."):
                 for idx, tkr in enumerate(selected_tickers):
                     try:
-                        # LAYER 1: FETCH PREMIUM FUNDAMENTAL DATA IN ONE SECURE GET CALL
+                        # FIXED: Re-engineered clean query parameters directly mapping to core endpoints
                         url = f"https://yahoo.com{tkr}?modules=defaultKeyStatistics,financialData,summaryDetail"
                         res = requests.get(url, headers=hdrs, timeout=10).json()
                         name, prc, roe, pb, fcf, ins, div, pe, fpe, d2e, mgn, grw = tkr.replace('.NS',''),'N/A','N/A','N/A','N/A','N/A','N/A','N/A','N/A','N/A','N/A','N/A'
@@ -69,7 +66,6 @@ if raw_symbols:
                         if 'quoteSummary' in res and res['quoteSummary']['result']:
                             r = res['quoteSummary']['result'][0]
                             f, s, d = r.get('financialData',{}), r.get('defaultKeyStatistics',{}), r.get('summaryDetail',{})
-                            # Parse High-Alpha Quant values cleanly
                             prc = f.get('currentPrice',{}).get('raw') or d.get('previousClose',{}).get('raw') or 'N/A'
                             pe = d.get('trailingPE',{}).get('raw') or d.get('forwardPE',{}).get('raw') or 'N/A'
                             fpe = d.get('forwardPE',{}).get('raw') or 'N/A'
@@ -82,7 +78,6 @@ if raw_symbols:
                             fcf = f.get('freeCashflow',{}).get('raw') or 'N/A'
                             ins = s.get('heldPercentInsiders',{}).get('raw') or 'N/A'
                             div = d.get('dividendYield',{}).get('raw') or 'N/A'
-                            # Percentage standardizing formats
                             if isinstance(mgn, float): mgn = f"{round(mgn*100,2)}%"
                             if isinstance(grw, float): grw = f"{round(grw*100,2)}%"
                             if isinstance(roe, float): roe = f"{round(roe*100,2)}%"
@@ -90,7 +85,7 @@ if raw_symbols:
                             if isinstance(div, float): div = f"{round(div*100,2)}%"
                             if isinstance(fcf, (int, float)): fcf = f"INR {fcf:,.2f}"
 
-                        # LAYER 2: RUN PYDROID-STYLE VOLUME SPIKE CHECK MATH
+                        # LAYER 2: PYDROID CHART VOLUME MATH
                         d_spike, i_spike = "NORMAL VOLUME", "NORMAL VOLUME"
                         if run_daily:
                             d_res = requests.get(f"https://yahoo.com{tkr}?interval=1d&range=1mo", headers=hdrs, timeout=10).json()
@@ -105,20 +100,19 @@ if raw_symbols:
                                 if len(v) >= 2 and (sum(v[:-1])/len(v[:-1])) > 0 and (v[-1]/(sum(v[:-1])/len(v[:-1]))) >= intraday_thresh:
                                     i_spike = f"⚡ 5M SPIKE ({round(v[-1]/(sum(v[:-1])/len(v[:-1])),2)}x)"
 
-                        # COLLATED ATTRIBUTE DOSSIER
                         combined_stock_data += f"== {name} ({tkr}) ==\nVol Daily: {d_spike} | 5m: {i_spike}\nPrc: {prc} | PE: {pe} | FwdPE: {fpe} | P/B: {pb}\nROE: {roe} | Margin: {mgn} | Growth: {grw}\nDebt: {d2e} | FCF: {fcf} | Insider: {ins} | Div: {div}\n---\n"
                     except Exception as e: st.error(f"Skipping {tkr}: {str(e)}")
                     progress_bar.progress((idx + 1) / len(selected_tickers))
             
             with st.expander("🔍 View Raw Extracted Dossier"): st.text(combined_stock_data)
             
-            # --- STEP 3: ARTIFICIAL HEURISTIC REASONING ---
+            # --- STEP 3: QUANT LOGIC EVALUATION ---
             if not groq_api_key: st.error("🔑 Provide Groq Key in sidebar.")
             else:
                 with st.spinner("Handing over data to Groq..."):
                     try:
                         client = Groq(api_key=groq_api_key)
-                        prompt = f"You are a quant hedge fund CIO. Analyze this financial/momentum data dossier:\n{combined_stock_data}\n\nCRITICAL OUTPUT FORMAT RULES:\n- Do NOT write a paragraphs or reports.\n- Output ONLY a clean Markdown Table comparing the key assets, followed by exactly ONE short two-sentence tactical summary picking the absolute 'Best Buy' winner and its single main risk trap."
+                        prompt = f"You are a quant hedge fund CIO. Analyze this financial/momentum data dossier:\n{combined_stock_data}\n\nCRITICAL FORMAT RULES:\n- Do NOT write long reports.\n- Output ONLY a clean Markdown Table comparing the key assets, followed by exactly ONE short two-sentence tactical summary picking the absolute 'Best Buy' winner and its single main risk trap."
                         completion = client.chat.completions.create(model=selected_model, messages=[{"role": "user", "content": prompt}], temperature=0.2)
                         st.subheader("🏆 Institutional Quantitative Investment Report")
                         st.markdown(completion.choices[0].message.content)
