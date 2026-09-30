@@ -58,9 +58,11 @@ if raw_symbols:
             with st.spinner("Executing Technical & Fundamental Fusion Scan..."):
                 for idx, tkr in enumerate(selected_tickers):
                     try:
-                        # FIXED: Re-engineered clean query parameters directly mapping to core endpoints
-                        url = f"https://yahoo.com{tkr}?modules=defaultKeyStatistics,financialData,summaryDetail"
-                        res = requests.get(url, headers=hdrs, timeout=10).json()
+                        # CRITICAL BUG FIX: Isolated clean domains to stop NameResolutionErrors
+                        url = f"https://yahoo.com{tkr}"
+                        params = {"modules": "defaultKeyStatistics,financialData,summaryDetail"}
+                        res = requests.get(url, headers=hdrs, params=params, timeout=10).json()
+                        
                         name, prc, roe, pb, fcf, ins, div, pe, fpe, d2e, mgn, grw = tkr.replace('.NS',''),'N/A','N/A','N/A','N/A','N/A','N/A','N/A','N/A','N/A','N/A','N/A'
                         
                         if 'quoteSummary' in res and res['quoteSummary']['result']:
@@ -85,7 +87,7 @@ if raw_symbols:
                             if isinstance(div, float): div = f"{round(div*100,2)}%"
                             if isinstance(fcf, (int, float)): fcf = f"INR {fcf:,.2f}"
 
-                        # LAYER 2: PYDROID CHART VOLUME MATH
+                        # PYDROID VOLUME MATH ENDPOINTS
                         d_spike, i_spike = "NORMAL VOLUME", "NORMAL VOLUME"
                         if run_daily:
                             d_res = requests.get(f"https://yahoo.com{tkr}?interval=1d&range=1mo", headers=hdrs, timeout=10).json()
