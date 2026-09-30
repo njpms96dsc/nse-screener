@@ -1,91 +1,201 @@
-import streamlit as st
-import io, csv, requests
-from groq import Groq
+import os
+import csv
+import time
+import requests
 
-st.set_page_config(page_title="Hedge Fund Screener", layout="wide")
-st.title("📊 AI-Powered Institutional Fundamental Screener")
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
 
-# --- SIDEBAR SETTINGS ---
-st.sidebar.header("🔑 Credentials & Settings")
-groq_api_key = st.sidebar.text_input("Groq API Key", type="password")
-selected_model = st.sidebar.selectbox("LLM Brain", ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"])
+def get_downloads_path():
+    """Detects standard Android Downloads path or fallback."""
+    primary_download = '/storage/emulated/0/Download'
+    if os.path.exists(primary_download):
+        return primary_download
+    return os.path.expanduser('~/Download')
 
-# --- STEP 1: PORTFOLIO INTAKE ---
-st.subheader("📁 Step 1: Provide Your Tickers")
-input_method = st.radio("Input method:", ["Upload CSV File", "Paste Symbols Text Box"])
-raw_symbols = []
+def select_csv_file(download_dir):
+    """Lists CSV files in Downloads and lets user select one by number."""
+    if not os.path.exists(download_dir):
+        print(f"Error: Directory not found: {download_dir}")
+        return None
 
-if input_method == "Upload CSV File":
-    uploaded_file = st.file_uploader("Upload stock list file:", type=None)
-    if uploaded_file is not None:
+    csv_files = [f for f in os.listdir(download_dir) if f.lower().endswith('.csv')]
+    
+    if not csv_files:
+        print(f"No CSV files found in: {download_dir}")
+        return None
+
+    print("\n--- STEP 1: SELECT CSV FILE ---")
+    for idx, fname in enumerate(csv_files, start=1):
+        print(f"{idx}. {fname}")
+    
+    while True:
         try:
-            text_data = uploaded_file.getvalue().decode("utf-8", errors="ignore")
-            reader = csv.reader(io.StringIO(text_data))
-            for row in reader:
-                if row and len(row) >= 3:
-                    sym = str(row[2]).strip().replace('"', '').upper()
-                    if sym and sym not in ['SYMBOL', 'TICKER', 'NAME', '']: raw_symbols.append(sym)
-            raw_symbols = list(set(raw_symbols))
-            if raw_symbols: st.success(f"Parsed! Extracted **{len(raw_symbols)}** symbols from column 3.")
-        except Exception as e: st.error(f"File reading issue: {str(e)}")
-else:
-    text_input = st.text_area("Paste symbols (split by space/comma):", value="SBIN, RELIANCE, INFY")
-    if text_input: raw_symbols = list(set([s.strip().upper() for s in text_input.replace(",", " ").split() if s.strip()]))
-
-if raw_symbols:
-    formatted_tickers = [s if s.endswith('.NS') else f"{s}.NS" for s in raw_symbols if s]
-    st.write(f"Total Unique Tickers Tracked: **{len(formatted_tickers)}**")
-    
-    st.subheader("🎯 Step 2: Select Targets for Synthesis")
-    selected_tickers = st.multiselect("Choose targets to scan:", options=formatted_tickers, default=formatted_tickers[:min(3, len(formatted_tickers))])
-    
-    if not selected_tickers: st.warning("⚠️ Choose at least one target stock.")
-    else:
-        if st.button("Run Fundamental Intelligence Analysis 🚀"):
-            combined_stock_data, progress_bar = "", st.progress(0)
-            hdrs = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            
-            with st.spinner("Harvesting Market Metrics Natively..."):
-                for idx, tkr in enumerate(selected_tickers):
-                    try:
-                        # FIXED: Bypassed the blocked quoteSummary block completely using active chart endpoints
-                        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{tkr}?interval=1d&range=1mo"
-                        res = requests.get(url, headers=hdrs, timeout=10).json()
-                        
-                        name = tkr.replace('.NS','')
-                        prc, prev_close, pe_ratio = 'N/A', 'N/A', 'N/A'
-                        
-                        if 'chart' in res and res['chart']['result']:
-                            meta = res['chart']['result'][0].get('meta', {})
-                            prc = meta.get('regularMarketPrice') or 'N/A'
-                            prev_close = meta.get('chartPreviousClose') or 'N/A'
-                            
-                            # Safely extract trailing operational parameters
-                            indicators = res['chart']['result'][0].get('indicators', {})
-                            quote = indicators.get('quote', [{}])[0]
-                            close_vols = [c for c in quote.get('close', []) if c is not None]
-                            volumes = [v for v in quote.get('volume', []) if v is not None]
-                            
-                            vol_status = "Normal"
-                            if len(volumes) >= 2:
-                                avg_v = sum(volumes[:-1]) / len(volumes[:-1])
-                                if avg_v > 0 and (volumes[-1] / avg_v) >= 2.0:
-                                    vol_status = f"💥 Spike ({round(volumes[-1]/avg_v, 2)}x)"
-                            
-                            combined_stock_data += f"== {name} ({tkr}) ==\nPrice: INR {prc} | Previous Close: INR {prev_close}\nVolume Kinetics: {vol_status}\n---\n"
-                    except Exception as e: st.error(f"Skipping {tkr}: {str(e)}")
-                    progress_bar.progress((idx + 1) / len(selected_tickers))
-            
-            with st.expander("🔍 View Raw Extracted Dossier"): st.text(combined_stock_data)
-            
-            if not groq_api_key: st.error("🔑 Provide Groq Key in sidebar.")
+            choice = int(input("\nSelect a CSV file number to scan: "))
+            if 1 <= choice <= len(csv_files):
+                selected_file = csv_files[choice - 1]
+                return os.path.join(download_dir, selected_file)
             else:
-                with st.spinner("Handing metrics over to Groq..."):
-                    try:
-                        client = Groq(api_key=groq_api_key)
-                        prompt = f"You are a quant hedge fund CIO. Analyze this market dataset:\n{combined_stock_data}\n\nCRITICAL FORMAT RULES:\n- Output ONLY a clean Markdown Table comparing the key assets, followed by exactly ONE short two-sentence tactical summary picking the absolute 'Best Buy' winner based on current market dynamics and its main risk trap."
-                        completion = client.chat.completions.create(model=selected_model, messages=[{"role": "user", "content": prompt}], temperature=0.2)
-                        st.subheader("🏆 Institutional Quantitative Investment Report")
-                        st.markdown(completion.choices[0].message.content)
-                    except Exception as e: st.error(f"Groq Interface Issue: {str(e)}")
-else: st.info("💡 Drop a tracking CSV file or paste symbols above to initialize the pipeline.")
+                print("Invalid choice. Try again.")
+        except ValueError:
+            print("Please enter a valid number.")
+
+def load_symbols_from_3rd_column(file_path):
+    """Extracts unique stock symbols from the 3rd column (Index 2)."""
+    symbols = []
+    print(f"\nLoading symbols from: {os.path.basename(file_path)}")
+    
+    try:
+        with open(file_path, mode='r', encoding='utf-8', errors='ignore') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) >= 3:
+                    symbol = row[2].strip().replace('"', '')
+                    if symbol and symbol.lower() not in ['symbol', 'ticker', 'name']:
+                        symbols.append(symbol)
+    except Exception as e:
+        print(f"Error reading file: {e}")
+        return []
+
+    return list(set(symbols))
+
+def prompt_timeframe_config(name):
+    """Prompts whether to enable a timeframe and sets its threshold."""
+    while True:
+        choice = input(f"Do you want to scan {name} charts? (y/n) [default: y]: ").strip().lower()
+        if choice in ['', 'y', 'yes']:
+            enabled = True
+            break
+        elif choice in ['n', 'no']:
+            enabled = False
+            return False, 0.0
+        else:
+            print("Please enter 'y' or 'n'.")
+            
+    # If enabled, prompt for multiplier
+    user_input = input(f"  -> Enter volume multiplier for {name} [default: 2.0]: ").strip()
+    if not user_input:
+        thresh = 2.0
+    else:
+        try:
+            thresh = float(user_input)
+            if thresh <= 0:
+                thresh = 2.0
+        except ValueError:
+            print("  -> Invalid input. Using default 2.0x")
+            thresh = 2.0
+            
+    return enabled, thresh
+
+def fetch_chart_data(symbol, interval="1d", range_period="1mo"):
+    formatted_symbol = symbol.strip().upper()
+    if not formatted_symbol.endswith('.NS'):
+        formatted_symbol += '.NS'
+        
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{formatted_symbol}?interval={interval}&range={range_period}"
+    
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        if response.status_code != 200:
+            return None
+        
+        data = response.json()
+        result = data['chart']['result'][0]
+        
+        raw_volumes = result['indicators']['quote'][0].get('volume', [])
+        return [v for v in raw_volumes if v is not None]
+    except Exception:
+        return None
+
+def check_volume_spike(volumes, lookback=20, spike_threshold=2.0):
+    if not volumes or len(volumes) < 2:
+        return False, 0, 0
+    
+    latest_volume = volumes[-1]
+    historical_volumes = volumes[-lookback-1:-1] if len(volumes) > lookback else volumes[:-1]
+    
+    if not historical_volumes:
+        return False, 0, 0
+    
+    avg_volume = sum(historical_volumes) / len(historical_volumes)
+    if avg_volume == 0:
+        return False, 0, 0
+    
+    ratio = latest_volume / avg_volume
+    return ratio >= spike_threshold, latest_volume, avg_volume
+
+def main():
+    downloads_path = get_downloads_path()
+    
+    # 1. File selection
+    selected_csv = select_csv_file(downloads_path)
+    if not selected_csv:
+        return
+
+    # 2. Timeframe Selection Prompts
+    print("\n--- STEP 2: SELECT TIMEFRAMES TO SCAN ---")
+    run_intraday, intraday_thresh = prompt_timeframe_config("Intraday (5m)")
+    run_daily, daily_thresh = prompt_timeframe_config("Daily")
+
+    if not run_intraday and not run_daily:
+        print("\nNo timeframes selected. Exiting scan.")
+        return
+
+    # 3. Load stock symbols
+    symbols = load_symbols_from_3rd_column(selected_csv)
+    if not symbols:
+        print("No valid symbols found in the selected CSV.")
+        return
+
+    print(f"\nLoaded {len(symbols)} unique symbols.")
+    
+    active_modes = []
+    if run_daily: active_modes.append(f"Daily >= {daily_thresh}x")
+    if run_intraday: active_modes.append(f"Intraday (5m) >= {intraday_thresh}x")
+    print("Active Scan Settings: " + " | ".join(active_modes) + "\n")
+    
+    spikes_found = []
+
+    for symbol in symbols:
+        print(f"Scanning {symbol}...", end=" ")
+        
+        daily_spike, d_curr, d_avg = False, 0, 0
+        intraday_spike, i_curr, i_avg = False, 0, 0
+        
+        # Daily Volume Check (if enabled)
+        if run_daily:
+            daily_vols = fetch_chart_data(symbol, interval="1d", range_period="1mo")
+            daily_spike, d_curr, d_avg = check_volume_spike(daily_vols, lookback=20, spike_threshold=daily_thresh)
+        
+        # Intraday (5m) Volume Check (if enabled)
+        if run_intraday:
+            intraday_vols = fetch_chart_data(symbol, interval="5m", range_period="1d")
+            intraday_spike, i_curr, i_avg = check_volume_spike(intraday_vols, lookback=12, spike_threshold=intraday_thresh)
+        
+        if daily_spike or intraday_spike:
+            status = []
+            if daily_spike:
+                status.append(f"Daily ({d_curr:,} vs Avg {int(d_avg):,})")
+            if intraday_spike:
+                status.append(f"5m Intraday ({i_curr:,} vs Avg {int(i_avg):,})")
+            
+            print(f" SPIKE DETECTED! -> " + " | ".join(status))
+            spikes_found.append({'symbol': symbol, 'daily': daily_spike, 'intraday': intraday_spike})
+        else:
+            print("Normal")
+        
+        time.sleep(0.3)
+
+    print("\n" + "="*50)
+    print(f"SCAN COMPLETE: {len(spikes_found)} stock(s) met volume conditions")
+    print("="*50)
+    for item in spikes_found:
+        tags = []
+        if item['daily']: tags.append("DAILY")
+        if item['intraday']: tags.append("INTRADAY")
+        print(f"• {item['symbol']} [{', '.join(tags)}]")
+
+if __name__ == "__main__":
+    main()
+#vol
