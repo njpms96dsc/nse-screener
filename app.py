@@ -43,45 +43,36 @@ if raw_symbols:
     else:
         if st.button("Run Fundamental Intelligence Analysis 🚀"):
             combined_stock_data, progress_bar = "", st.progress(0)
+            hdrs = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             
-            # FIREWALL BYPASS: Establish tracking session mimicking an active client layout
-            hdrs = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
-            session = requests.Session()
-            session.headers.update(hdrs)
-            
-            # Initial lookup to acquire native tracking headers from the server endpoint
-            try: session.get("https://fc.yahoo.com", headers=hdrs, timeout=5)
-            except Exception: pass
-            
-            import yfinance as yf
-            
-            with st.spinner("Harvesting High-Alpha Institutional Ratios..."):
+            with st.spinner("Harvesting Market Metrics Natively..."):
                 for idx, tkr in enumerate(selected_tickers):
                     try:
-                        # Injecting the authorized session layer into the connection channel
-                        stock = yf.Ticker(tkr, session=session)
-                        info = stock.info
+                        # FIXED: Bypassed the blocked quoteSummary block completely using active chart endpoints
+                        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{tkr}?interval=1d&range=1mo"
+                        res = requests.get(url, headers=hdrs, timeout=10).json()
                         
-                        name = info.get('longName') or info.get('shortName') or tkr
-                        prc = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose') or 'N/A'
-                        pe = info.get('trailingPE') or info.get('forwardPE') or 'N/A'
-                        pb = info.get('priceToBook') or 'N/A'
-                        roe = info.get('returnOnEquity') or 'N/A'
-                        mgn = info.get('profitMargins') or 'N/A'
-                        grw = info.get('revenueGrowth') or 'N/A'
-                        fcf = info.get('freeCashflow') or 'N/A'
-                        ins = info.get('heldPercentInsiders') or 'N/A'
+                        name = tkr.replace('.NS','')
+                        prc, prev_close, pe_ratio = 'N/A', 'N/A', 'N/A'
                         
-                        d2e = info.get('debtToEquity')
-                        if d2e is None: d2e = "N/A (Banking Framework)" if "bank" in str(name).lower() else "N/A"
-                        
-                        if isinstance(mgn, float): mgn = f"{round(mgn*100,2)}%"
-                        if isinstance(grw, float): grw = f"{round(grw*100,2)}%"
-                        if isinstance(roe, float): roe = f"{round(roe*100,2)}%"
-                        if isinstance(ins, float): ins = f"{round(ins*100,2)}%"
-                        if isinstance(fcf, (int, float)): fcf = f"INR {fcf:,.2f}"
-                        
-                        combined_stock_data += f"== {name} ({tkr}) ==\nPrice: INR {prc} | PE: {pe} | P/B: {pb}\nROE: {roe} | Net Margin: {mgn} | Rev Growth: {grw}\nDebt/Equity: {d2e} | Free Cash Flow: {fcf} | Insider Holding: {ins}\n---\n"
+                        if 'chart' in res and res['chart']['result']:
+                            meta = res['chart']['result'][0].get('meta', {})
+                            prc = meta.get('regularMarketPrice') or 'N/A'
+                            prev_close = meta.get('chartPreviousClose') or 'N/A'
+                            
+                            # Safely extract trailing operational parameters
+                            indicators = res['chart']['result'][0].get('indicators', {})
+                            quote = indicators.get('quote', [{}])[0]
+                            close_vols = [c for c in quote.get('close', []) if c is not None]
+                            volumes = [v for v in quote.get('volume', []) if v is not None]
+                            
+                            vol_status = "Normal"
+                            if len(volumes) >= 2:
+                                avg_v = sum(volumes[:-1]) / len(volumes[:-1])
+                                if avg_v > 0 and (volumes[-1] / avg_v) >= 2.0:
+                                    vol_status = f"💥 Spike ({round(volumes[-1]/avg_v, 2)}x)"
+                            
+                            combined_stock_data += f"== {name} ({tkr}) ==\nPrice: INR {prc} | Previous Close: INR {prev_close}\nVolume Kinetics: {vol_status}\n---\n"
                     except Exception as e: st.error(f"Skipping {tkr}: {str(e)}")
                     progress_bar.progress((idx + 1) / len(selected_tickers))
             
@@ -92,7 +83,7 @@ if raw_symbols:
                 with st.spinner("Handing metrics over to Groq..."):
                     try:
                         client = Groq(api_key=groq_api_key)
-                        prompt = f"You are a quant hedge fund CIO. Analyze this institutional fundamental dossier:\n{combined_stock_data}\n\nCRITICAL FORMAT RULES:\n- Do NOT write long text reports.\n- Output ONLY a clean Markdown Table comparing the key assets, followed by exactly ONE short two-sentence tactical summary picking the absolute 'Best Buy' winner based on balance sheet strengths and its single main risk trap."
+                        prompt = f"You are a quant hedge fund CIO. Analyze this market dataset:\n{combined_stock_data}\n\nCRITICAL FORMAT RULES:\n- Output ONLY a clean Markdown Table comparing the key assets, followed by exactly ONE short two-sentence tactical summary picking the absolute 'Best Buy' winner based on current market dynamics and its main risk trap."
                         completion = client.chat.completions.create(model=selected_model, messages=[{"role": "user", "content": prompt}], temperature=0.2)
                         st.subheader("🏆 Institutional Quantitative Investment Report")
                         st.markdown(completion.choices[0].message.content)
