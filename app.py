@@ -2,6 +2,7 @@ import streamlit as st
 import io
 import csv
 import yfinance as yf
+import requests
 from groq import Groq
 
 st.set_page_config(page_title="Hedge Fund Stock Screener", layout="wide")
@@ -9,7 +10,6 @@ st.title("📊 AI-Powered NSE Stock Screener")
 
 st.sidebar.header("🔑 Credentials & Settings")
 groq_api_key = st.sidebar.text_input("Groq API Key", type="password", help="Enter your Groq Cloud API Key")
-# Active, production-ready Groq model selections
 selected_model = st.sidebar.selectbox("LLM Brain", ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"])
 
 st.subheader("📁 Step 1: Provide Your Tickers")
@@ -58,35 +58,40 @@ if raw_symbols:
             combined_stock_data = ""
             progress_bar = st.progress(0)
             
+            # CREATE A CUSTOM REQUESTS SESSION TO BYPASS RENDER CLOUD BLOCKS
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            })
+            
             with st.spinner("Fetching live market metrics from Yahoo Finance..."):
                 for idx, ticker in enumerate(selected_tickers):
                     try:
-                        stock = yf.Ticker(ticker)
+                        # Pass our browser session directly into yfinance
+                        stock = yf.Ticker(ticker, session=session)
                         info = stock.info
                         
-                        # --- SMART FALLBACK FETCHING PIPELINE ---
-                        name = info.get('longName') or info.get('shortName') or ticker
-                        
-                        # Price fallback check
-                        price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose') or 'N/A'
-                        
-                        # P/E valuation fallback checks
-                        pe = info.get('trailingPE') or info.get('forwardPE') or 'N/A'
-                        forward_pe = info.get('forwardPE') or 'N/A'
-                        
-                        # Debt metric formatting fallback
-                        debt_to_equity = info.get('debtToEquity')
-                        if debt_to_equity is None:
-                            # Banks typically won't track standard industrial debt/equity
-                            debt_to_equity = "N/A (Banking Structure or Low Leverage)" if "bank" in str(name).lower() else "N/A"
-                        
-                        # Margin & Growth fallback handling
-                        profit_margin = info.get('profitMargins') or info.get('operatingMargins') or 'N/A'
-                        revenue_growth = info.get('revenueGrowth') or info.get('quarterlyRevenueGrowth') or 'N/A'
-                        
-                        # Convert float percentages to readable string displays
-                        if isinstance(profit_margin, float): profit_margin = f"{round(profit_margin * 100, 2)}%"
-                        if isinstance(revenue_growth, float): revenue_growth = f"{round(revenue_growth * 100, 2)}%"
+                        if not info or len(info) < 5:
+                            # Fallback strategy: try fetching basic close price if full dictionary is restricted
+                            fast_info = stock.fast_info
+                            price = fast_info.get('last_price') or 'N/A'
+                            name = ticker
+                            pe, forward_pe, debt_to_equity, profit_margin, revenue_growth = 'N/A', 'N/A', 'N/A', 'N/A', 'N/A'
+                        else:
+                            name = info.get('longName') or info.get('shortName') or ticker
+                            price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose') or 'N/A'
+                            pe = info.get('trailingPE') or info.get('forwardPE') or 'N/A'
+                            forward_pe = info.get('forwardPE') or 'N/A'
+                            
+                            debt_to_equity = info.get('debtToEquity')
+                            if debt_to_equity is None:
+                                debt_to_equity = "N/A (Banking Structure)" if "bank" in str(name).lower() else "N/A"
+                            
+                            profit_margin = info.get('profitMargins') or info.get('operatingMargins') or 'N/A'
+                            revenue_growth = info.get('revenueGrowth') or info.get('quarterlyRevenueGrowth') or 'N/A'
+                            
+                            if isinstance(profit_margin, float): profit_margin = f"{round(profit_margin * 100, 2)}%"
+                            if isinstance(revenue_growth, float): revenue_growth = f"{round(revenue_growth * 100, 2)}%"
                         
                         combined_stock_data += f"""
                         === STOCK: {name} ({ticker}) ===
@@ -118,7 +123,6 @@ if raw_symbols:
                             temperature=0.2
                         )
                         st.subheader("🏆 AI Chief Investment Officer Report")
-                        # Preserving the zero-index list property extraction fix
                         st.markdown(completion.choices[0].message.content)
                     except Exception as e:
                         st.error(f"Groq API Error: {str(e)}")
