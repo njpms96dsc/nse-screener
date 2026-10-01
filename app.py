@@ -11,7 +11,17 @@ st.title("📊 AI-Powered Fundamental NSE Stock Screener")
 # --- Sidebar Configuration ---
 st.sidebar.header("🔑 Credentials & Settings")
 groq_api_key = st.sidebar.text_input("Groq API Key", type="password", help="Enter your Groq Cloud API Key")
-selected_model = st.sidebar.selectbox("LLM Brain", ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"])
+
+# Use guaranteed active model IDs for Groq Cloud
+valid_models = [
+    "llama-3.1-8b-instant",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it"
+]
+
+selected_model = st.sidebar.selectbox("LLM Brain", valid_models)
 
 st.subheader("📁 Step 1: Provide Your Tickers")
 input_method = st.radio("Choose how to input your stocklist:", ["Upload CSV File", "Paste Symbols Text Box"])
