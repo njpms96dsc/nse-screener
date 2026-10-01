@@ -1,4 +1,3 @@
-streamlit>=1.32.0
-pandas>=2.0.0
-yfinance>=0.2.36
-groq>=0.4.2
+streamlit
+yfinance
+groq
