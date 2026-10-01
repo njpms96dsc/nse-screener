@@ -1,201 +1,114 @@
-import os
-import csv
-import time
-import requests
+import streamlit as st
+import pandas as pd
+import yfinance as yf
+from groq import Groq
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-}
+st.set_page_config(page_title="Hedge Fund Stock Screener", layout="wide")
+st.title("📊 AI-Powered NSE Stock Screener & Analyst")
+st.write("Upload your standard NSE CSV file, scan the metrics, and pass them to the Groq LLM brain for target analysis.")
 
-def get_downloads_path():
-    """Detects standard Android Downloads path or fallback."""
-    primary_download = '/storage/emulated/0/Download'
-    if os.path.exists(primary_download):
-        return primary_download
-    return os.path.expanduser('~/Download')
+st.sidebar.header("🔑 Credentials & Settings")
+groq_api_key = st.sidebar.text_input("Groq API Key", type="password", help="Enter your Groq Cloud API Key")
+selected_model = st.sidebar.selectbox("LLM Brain", ["llama3-8b-8192", "llama3-70b-8192", "mixtral-8x7b-32768"])
 
-def select_csv_file(download_dir):
-    """Lists CSV files in Downloads and lets user select one by number."""
-    if not os.path.exists(download_dir):
-        print(f"Error: Directory not found: {download_dir}")
-        return None
+uploaded_file = st.file_uploader("Upload your NSE Screener CSV (e.g., niftymicrocap250.csv)", type=["csv"])
 
-    csv_files = [f for f in os.listdir(download_dir) if f.lower().endswith('.csv')]
-    
-    if not csv_files:
-        print(f"No CSV files found in: {download_dir}")
-        return None
-
-    print("\n--- STEP 1: SELECT CSV FILE ---")
-    for idx, fname in enumerate(csv_files, start=1):
-        print(f"{idx}. {fname}")
-    
-    while True:
-        try:
-            choice = int(input("\nSelect a CSV file number to scan: "))
-            if 1 <= choice <= len(csv_files):
-                selected_file = csv_files[choice - 1]
-                return os.path.join(download_dir, selected_file)
-            else:
-                print("Invalid choice. Try again.")
-        except ValueError:
-            print("Please enter a valid number.")
-
-def load_symbols_from_3rd_column(file_path):
-    """Extracts unique stock symbols from the 3rd column (Index 2)."""
-    symbols = []
-    print(f"\nLoading symbols from: {os.path.basename(file_path)}")
-    
+if uploaded_file is not None:
     try:
-        with open(file_path, mode='r', encoding='utf-8', errors='ignore') as f:
-            reader = csv.reader(f)
-            for row in reader:
-                if len(row) >= 3:
-                    symbol = row[2].strip().replace('"', '')
-                    if symbol and symbol.lower() not in ['symbol', 'ticker', 'name']:
-                        symbols.append(symbol)
+        df = pd.read_csv(uploaded_file)
+        
+        if len(df.columns) < 3:
+            st.error("The uploaded CSV has fewer than 3 columns. Please upload a standard NSE formatted file.")
+            st.stop()
+            
+        symbol_col_name = df.columns[2]
+        st.success(f"Successfully loaded CSV! Identified Symbol Column: '**{symbol_col_name}**'")
+        
+        raw_symbols = df[symbol_col_name].dropna().astype(str).str.strip().str.upper().unique().tolist()
+        formatted_tickers = [sym if sym.endswith('.NS') else f"{sym}.NS" for sym in raw_symbols if sym]
+        
+        st.write(f"Total Unique Tickers Discovered: **{len(formatted_tickers)}**")
+        
+        st.subheader("🎯 Step 1: Select Stocks for AI Analysis")
+        st.info("To avoid API rate limits and keep context clean, select up to 3 stocks from your file to analyze.")
+        
+        selected_tickers = st.multiselect(
+            "Choose exactly 3 stocks to compare:",
+            options=formatted_tickers,
+            default=formatted_tickers[:min(3, len(formatted_tickers))]
+        )
+        
+        if len(selected_tickers) != 3:
+            st.warning("⚠️ Please select exactly 3 stocks to match the quantitative model criteria.")
+        else:
+            if st.button("Run Financial Deep-Dive 🚀"):
+                combined_stock_data = ""
+                progress_bar = st.progress(0)
+                
+                with st.spinner("Fetching live market metrics from Yahoo Finance..."):
+                    for idx, ticker in enumerate(selected_tickers):
+                        try:
+                            stock = yf.Ticker(ticker)
+                            info = stock.info
+                            
+                            name = info.get('longName', ticker)
+                            price = info.get('currentPrice', 'N/A')
+                            pe = info.get('trailingPE', 'N/A')
+                            forward_pe = info.get('forwardPE', 'N/A')
+                            debt_to_equity = info.get('debtToEquity', 'N/A')
+                            profit_margin = info.get('profitMargins', 'N/A')
+                            revenue_growth = info.get('revenueGrowth', 'N/A')
+                            
+                            combined_stock_data += f"""
+                            === STOCK: {name} ({ticker}) ===
+                            Current Price: INR {price}
+                            P/E Ratio: {pe} | Forward P/E: {forward_pe}
+                            Debt to Equity Ratio: {debt_to_equity}
+                            Profit Margin: {profit_margin}
+                            Revenue Growth (YoY): {revenue_growth}
+                            --------------------------------------------------
+                            """
+                        except Exception as e:
+                            st.error(f"Error fetching data for {ticker}: {str(e)}")
+                        progress_bar.progress((idx + 1) / len(selected_tickers))
+                
+                with st.expander("🔍 View Raw Extracted Dossier"):
+                    st.text(combined_stock_data)
+                
+                if not groq_api_key:
+                    st.error("🔑 Please provide a valid Groq API Key in the sidebar to run the AI Analysis.")
+                else:
+                    with st.spinner("Handing over the data to the Groq LLM brain..."):
+                        try:
+                            client = Groq(api_key=groq_api_key)
+                            
+                            prompt = f"""
+                            You are the Chief Investment Officer of a quantitative hedge fund. 
+                            Analyze the raw financial data of these 3 Indian stocks and pick exactly ONE absolute "Best Buy" for a medium-term investment.
+
+                            Here is the raw stock data:
+                            {combined_stock_data}
+
+                            Provide your final analysis structured exactly like this:
+                            1. THE WINNER: [Stock Name]
+                            2. CORE INVESTMENT THESIS: [Explain exactly why its numbers beat the other two in plain English]
+                            3. THE CRITICAL RISK: [The single biggest flaw or hidden trap in this winner's data]
+                            """
+                            
+                            completion = client.chat.completions.create(
+                                model=selected_model,
+                                messages=[{"role": "user", "content": prompt}],
+                                temperature=0.2
+                            )
+                            
+                            st.subheader("🏆 AI Chief Investment Officer Report")
+                            st.markdown(completion.choices[0].message.content)
+                            
+                        except Exception as e:
+                            st.error(f"Groq API Error: {str(e)}")
+                            
     except Exception as e:
-        print(f"Error reading file: {e}")
-        return []
+        st.error(f"Error reading the file structure: {str(e)}")
 
-    return list(set(symbols))
-
-def prompt_timeframe_config(name):
-    """Prompts whether to enable a timeframe and sets its threshold."""
-    while True:
-        choice = input(f"Do you want to scan {name} charts? (y/n) [default: y]: ").strip().lower()
-        if choice in ['', 'y', 'yes']:
-            enabled = True
-            break
-        elif choice in ['n', 'no']:
-            enabled = False
-            return False, 0.0
-        else:
-            print("Please enter 'y' or 'n'.")
-            
-    # If enabled, prompt for multiplier
-    user_input = input(f"  -> Enter volume multiplier for {name} [default: 2.0]: ").strip()
-    if not user_input:
-        thresh = 2.0
-    else:
-        try:
-            thresh = float(user_input)
-            if thresh <= 0:
-                thresh = 2.0
-        except ValueError:
-            print("  -> Invalid input. Using default 2.0x")
-            thresh = 2.0
-            
-    return enabled, thresh
-
-def fetch_chart_data(symbol, interval="1d", range_period="1mo"):
-    formatted_symbol = symbol.strip().upper()
-    if not formatted_symbol.endswith('.NS'):
-        formatted_symbol += '.NS'
-        
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{formatted_symbol}?interval={interval}&range={range_period}"
-    
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        if response.status_code != 200:
-            return None
-        
-        data = response.json()
-        result = data['chart']['result'][0]
-        
-        raw_volumes = result['indicators']['quote'][0].get('volume', [])
-        return [v for v in raw_volumes if v is not None]
-    except Exception:
-        return None
-
-def check_volume_spike(volumes, lookback=20, spike_threshold=2.0):
-    if not volumes or len(volumes) < 2:
-        return False, 0, 0
-    
-    latest_volume = volumes[-1]
-    historical_volumes = volumes[-lookback-1:-1] if len(volumes) > lookback else volumes[:-1]
-    
-    if not historical_volumes:
-        return False, 0, 0
-    
-    avg_volume = sum(historical_volumes) / len(historical_volumes)
-    if avg_volume == 0:
-        return False, 0, 0
-    
-    ratio = latest_volume / avg_volume
-    return ratio >= spike_threshold, latest_volume, avg_volume
-
-def main():
-    downloads_path = get_downloads_path()
-    
-    # 1. File selection
-    selected_csv = select_csv_file(downloads_path)
-    if not selected_csv:
-        return
-
-    # 2. Timeframe Selection Prompts
-    print("\n--- STEP 2: SELECT TIMEFRAMES TO SCAN ---")
-    run_intraday, intraday_thresh = prompt_timeframe_config("Intraday (5m)")
-    run_daily, daily_thresh = prompt_timeframe_config("Daily")
-
-    if not run_intraday and not run_daily:
-        print("\nNo timeframes selected. Exiting scan.")
-        return
-
-    # 3. Load stock symbols
-    symbols = load_symbols_from_3rd_column(selected_csv)
-    if not symbols:
-        print("No valid symbols found in the selected CSV.")
-        return
-
-    print(f"\nLoaded {len(symbols)} unique symbols.")
-    
-    active_modes = []
-    if run_daily: active_modes.append(f"Daily >= {daily_thresh}x")
-    if run_intraday: active_modes.append(f"Intraday (5m) >= {intraday_thresh}x")
-    print("Active Scan Settings: " + " | ".join(active_modes) + "\n")
-    
-    spikes_found = []
-
-    for symbol in symbols:
-        print(f"Scanning {symbol}...", end=" ")
-        
-        daily_spike, d_curr, d_avg = False, 0, 0
-        intraday_spike, i_curr, i_avg = False, 0, 0
-        
-        # Daily Volume Check (if enabled)
-        if run_daily:
-            daily_vols = fetch_chart_data(symbol, interval="1d", range_period="1mo")
-            daily_spike, d_curr, d_avg = check_volume_spike(daily_vols, lookback=20, spike_threshold=daily_thresh)
-        
-        # Intraday (5m) Volume Check (if enabled)
-        if run_intraday:
-            intraday_vols = fetch_chart_data(symbol, interval="5m", range_period="1d")
-            intraday_spike, i_curr, i_avg = check_volume_spike(intraday_vols, lookback=12, spike_threshold=intraday_thresh)
-        
-        if daily_spike or intraday_spike:
-            status = []
-            if daily_spike:
-                status.append(f"Daily ({d_curr:,} vs Avg {int(d_avg):,})")
-            if intraday_spike:
-                status.append(f"5m Intraday ({i_curr:,} vs Avg {int(i_avg):,})")
-            
-            print(f" SPIKE DETECTED! -> " + " | ".join(status))
-            spikes_found.append({'symbol': symbol, 'daily': daily_spike, 'intraday': intraday_spike})
-        else:
-            print("Normal")
-        
-        time.sleep(0.3)
-
-    print("\n" + "="*50)
-    print(f"SCAN COMPLETE: {len(spikes_found)} stock(s) met volume conditions")
-    print("="*50)
-    for item in spikes_found:
-        tags = []
-        if item['daily']: tags.append("DAILY")
-        if item['intraday']: tags.append("INTRADAY")
-        print(f"• {item['symbol']} [{', '.join(tags)}]")
-
-if __name__ == "__main__":
-    main()
-#vol
+else:
+    st.info("💡 Drop an active NSE CSV file above to begin the quantitative analysis pipeline.")
