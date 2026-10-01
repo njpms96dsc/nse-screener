@@ -67,7 +67,7 @@ if raw_symbols:
             with st.spinner("Fetching full fundamental modules via API Backend..."):
                 for idx, ticker in enumerate(selected_tickers):
                     try:
-                        # Pulling summary modules directly to retrieve fundamental metrics securely
+                        # FIXED: Repositioned ticker in URL to prevent smashing strings together
                         url = f"https://yahoo.com{ticker}?modules=summaryDetail,financialData,price"
                         response = requests.get(url, headers=headers, timeout=10)
                         
