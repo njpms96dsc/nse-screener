@@ -1,7 +1,7 @@
 import streamlit as st
 import io
 import csv
-import requests
+import yfinance as yf
 from groq import Groq
 
 # Set up clean mobile-optimized page layout
@@ -11,7 +11,7 @@ st.title("📊 AI-Powered Fundamental NSE Stock Screener")
 # --- Sidebar Configuration ---
 st.sidebar.header("🔑 Credentials & Settings")
 groq_api_key = st.sidebar.text_input("Groq API Key", type="password", help="Enter your Groq Cloud API Key")
-selected_model = st.sidebar.selectbox("LLM Brain", ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b"])
+selected_model = st.sidebar.selectbox("LLM Brain", ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"])
 
 st.subheader("📁 Step 1: Provide Your Tickers")
 input_method = st.radio("Choose how to input your stocklist:", ["Upload CSV File", "Paste Symbols Text Box"])
@@ -59,53 +59,29 @@ if raw_symbols:
             combined_stock_data = ""
             progress_bar = st.progress(0)
             
-            # Pydroid network signature to bypass institutional cloud server blocks
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-            
-            with st.spinner("Fetching full fundamental modules via API Backend..."):
+            with st.spinner("Fetching full fundamental modules via yfinance..."):
                 for idx, ticker in enumerate(selected_tickers):
                     try:
-                        # FIXED: Repositioned ticker in URL to prevent smashing strings together
-                        url = f"https://yahoo.com{ticker}?modules=summaryDetail,financialData,price"
-                        response = requests.get(url, headers=headers, timeout=10)
+                        stock = yf.Ticker(ticker)
+                        info = stock.info
                         
-                        name = ticker
-                        price = "N/A"
-                        pe = "N/A"
-                        forward_pe = "N/A"
-                        debt_to_equity = "N/A"
-                        profit_margin = "N/A"
-                        revenue_growth = "N/A"
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            modules_list = data.get('quoteSummary', {}).get('result', [])
-                            
-                            if modules_list:
-                                result = modules_list[0]
-                                price_module = result.get('price', {})
-                                summary_module = result.get('summaryDetail', {})
-                                financial_module = result.get('financialData', {})
-                                
-                                name = price_module.get('longName', ticker)
-                                price = financial_module.get('currentPrice', {}).get('raw', 'N/A')
-                                pe = summary_module.get('trailingPE', {}).get('raw', 'N/A')
-                                forward_pe = summary_module.get('forwardPE', {}).get('raw', 'N/A')
-                                debt_to_equity = financial_module.get('debtToEquity', {}).get('raw', 'N/A')
-                                profit_margin = financial_module.get('profitMargins', {}).get('raw', 'N/A')
-                                revenue_growth = financial_module.get('revenueGrowth', {}).get('raw', 'N/A')
+                        name = info.get('longName', ticker)
+                        price = info.get('currentPrice', info.get('regularMarketPrice', 'N/A'))
+                        pe = info.get('trailingPE', 'N/A')
+                        forward_pe = info.get('forwardPE', 'N/A')
+                        debt_to_equity = info.get('debtToEquity', 'N/A')
+                        profit_margin = info.get('profitMargins', 'N/A')
+                        revenue_growth = info.get('revenueGrowth', 'N/A')
                         
                         combined_stock_data += f"""
-                        === STOCK: {name} ({ticker}) ===
-                        Current Price: INR {price}
-                        P/E Ratio: {pe} | Forward P/E: {forward_pe}
-                        Debt to Equity Ratio: {debt_to_equity}
-                        Profit Margin: {profit_margin}
-                        Revenue Growth (YoY): {revenue_growth}
-                        --------------------------------------------------
-                        """
+=== STOCK: {name} ({ticker}) ===
+Current Price: INR {price}
+P/E Ratio: {pe} | Forward P/E: {forward_pe}
+Debt to Equity Ratio: {debt_to_equity}
+Profit Margin: {profit_margin}
+Revenue Growth (YoY): {revenue_growth}
+--------------------------------------------------
+"""
                     except Exception as e:
                         st.error(f"Error fetching data for {ticker}: {str(e)}")
                     progress_bar.progress((idx + 1) / len(selected_tickers))
@@ -119,9 +95,21 @@ if raw_symbols:
                 with st.spinner("Handing data over to the Groq LLM brain for valuation vetting..."):
                     try:
                         client = Groq(api_key=groq_api_key)
-                        prompt = f"""You are the Chief Investment Officer of a quantitative hedge fund. Analyze the raw financial data of these stocks and pick exactly ONE absolute "Best Buy" for a medium-term investment.\n\nHere is the raw stock data:\n{combined_stock_data}\n\nProvide your final analysis structured exactly like this:\n1. THE WINNER: [Stock Name]\n2. CORE INVESTMENT THESIS: [Explain exactly why its valuation and fundamental numbers beat the others in plain English]\n3. THE CRITICAL RISK: [The single biggest flaw or hidden trap in this winner's data]"""
+                        prompt = f"""You are the Chief Investment Officer of a quantitative hedge fund. Analyze the raw financial data of these stocks and pick exactly ONE absolute "Best Buy" for a medium-term investment.
+
+Here is the raw stock data:
+{combined_stock_data}
+
+Provide your final analysis structured exactly like this:
+1. THE WINNER: [Stock Name]
+2. CORE INVESTMENT THESIS: [Explain exactly why its valuation and fundamental numbers beat the others in plain English]
+3. THE CRITICAL RISK: [The single biggest flaw or hidden trap in this winner's data]"""
                         
-                        completion = client.chat.completions.create(model=selected_model, messages=[{"role": "user", "content": prompt}], temperature=0.2)
+                        completion = client.chat.completions.create(
+                            model=selected_model,
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0.2
+                        )
                         st.subheader("🏆 AI Chief Investment Officer Report")
                         st.markdown(completion.choices[0].message.content)
                     except Exception as e:
