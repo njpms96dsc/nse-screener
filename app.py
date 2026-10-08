@@ -1,95 +1,87 @@
 import streamlit as st
 import yfinance as yf
+import pandas as pd
 from groq import Groq
+import os
 
-st.set_page_config(page_title="Simple AI Stock Screener", page_icon="📈")
+# Initialize Groq Client
+# Ensure GROQ_API_KEY is set in Render's Environment Variables
+groq_api_key = os.environ.get("GROQ_API_KEY", "")
+client = Groq(api_key=groq_api_key) if groq_api_key else None
 
-st.title("📈 Barebones AI Stock Screener")
-st.write("Fetch key stock metrics with `yfinance` and let **Groq AI** pick the best stock.")
+st.set_page_config(page_title="NSE Advanced Stock Analyzer", layout="wide")
+st.title("🚀 Advanced NSE Stock Fundamental Analyzer & LLM Picker")
 
-# --- Sidebar ---
-st.sidebar.header("🔑 API Credentials")
-api_key = st.sidebar.text_input("Enter Groq API Key", type="password")
+# 1. Define Stock List (Easily expandable)
+NIFTY_BATCH = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "ITC.NS", "TATAMOTORS.NS", "SBIN.NS"]
 
-# --- Stock Inputs ---
-symbols_input = st.text_input("Stock Tickers (comma separated):", value="RELIANCE.NS, SBIN.NS, INFY.NS")
+@st.cache_data(ttl=3600)  # Cache data for 1 hour to avoid yfinance rate limits
+def fetch_stock_data(tickers):
+    data_list = []
+    for ticker in tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            
+            # Advanced Fundamental Metrics Extraction
+            metrics = {
+                "Ticker": ticker,
+                "Company": info.get("longName", ticker),
+                "P/E Ratio": info.get("trailingPE", None),
+                "P/B Ratio": info.get("priceToBook", None),
+                "ROE (%)": info.get("returnOnEquity", 0) * 100 if info.get("returnOnEquity") else None,
+                "Debt/Equity": info.get("debtToEquity", None),
+                "Free Cash Flow (Cr)": (info.get("freeCashflow", 0) / 10000000) if info.get("freeCashflow") else None,
+                "Dividend Yield (%)": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0,
+                "Current Price": info.get("currentPrice", None)
+            }
+            data_list.append(metrics)
+        except Exception as e:
+            st.warning(f"Error fetching {ticker}: {str(e)}")
+    return pd.DataFrame(data_list)
 
-if st.button("Run Fundamental Analysis 🚀"):
-    if not api_key:
-        st.error("Please provide your Groq API key in the sidebar!")
-    else:
-        # Split tickers into list
-        tickers = [s.strip().upper() for s in symbols_input.split(",") if s.strip()]
+# Load data
+st.subheader("📊 Step 1: Extracting Live Fundamental Data")
+with st.spinner("Fetching data from yfinance..."):
+    df = fetch_stock_data(NIFTY_BATCH)
+
+st.dataframe(df.style.highlight_max(axis=0, subset=["ROE (%)"]), use_container_width=True)
+
+# 2. Hard Financial Filtering Rule (Scaffolding for LLM)
+st.subheader("🎯 Step 2: Algorithmic Ranking")
+# Filter for Quality: ROE > 15% and Debt/Equity < 1.5
+filtered_df = df[(df["ROE (%)"] > 15) & (df["Debt/Equity"] < 150)].copy() if not df.empty else df
+st.write(f"Filtered down to **{len(filtered_df)}** fundamentally strong stocks for LLM Review.")
+
+# 3. Groq LLM Decision Agent
+st.subheader("🤖 Step 3: Groq AI Deep Analysis")
+
+if not client:
+    st.error("Please set your GROQ_API_KEY in Render environment variables or script.")
+else:
+    if st.button("Run Groq AI Allocation Picker"):
+        # Convert filtered data to markdown table for LLM to ingest cleanly
+        data_payload = filtered_df.to_markdown(index=False)
         
-        st.subheader("📊 Stock Data Extracted")
-        dossier = ""
+        system_prompt = (
+            "You are an expert SEBI-registered portfolio manager analyzing Indian equities. "
+            "Evaluate the provided fundamental table. Pick the top 2 outperforming stocks based on value (P/E, P/B) "
+            "and efficiency (ROE, Free Cash Flow). Provide a crisp investment thesis for each choice."
+        )
         
-        with st.spinner("Fetching data from Yahoo Finance..."):
-            for ticker in tickers:
-                try:
-                    # Fetch fundamentals using yfinance
-                    stock = yf.Ticker(ticker)
-                    info = stock.info
-                    
-                    # Extract target metrics safely
-                    price = info.get("currentPrice", info.get("regularMarketPrice", "N/A"))
-                    pe = info.get("trailingPE", "N/A")
-                    roe = info.get("returnOnEquity", "N/A")
-                    pb = info.get("priceToBook", "N/A")
-                    
-                    # Convert ROE to percentage format if numeric
-                    if isinstance(roe, (int, float)):
-                        roe = f"{roe * 100:.2f}%"
-                    
-                    st.write(f"**{ticker}**: Price = `INR {price}` | P/E = `{pe}` | ROE = `{roe}` | P/BV = `{pb}`")
-                    
-                    dossier += f"""
-=== Stock: {ticker} ===
-Price: INR {price}
-P/E Ratio: {pe}
-Return on Equity (ROE): {roe}
-Price-to-Book (P/BV): {pb}
------------------------
-"""
-                except Exception as e:
-                    st.error(f"Error fetching data for {ticker}: {e}")
-
-        if dossier:
-            st.divider()
-            st.subheader("🤖 AI CIO Analysis")
-            with st.spinner("Asking Groq AI to evaluate..."):
-                try:
-                    client = Groq(api_key=api_key.strip())
-                    
-                    # Dynamically query available models to prevent 404 model_not_found errors
-                    models_res = client.models.list()
-                    available_models = [m.id for m in models_res.data]
-                    
-                    # Pick the best available text model for your key
-                    selected_model = "llama-3.1-8b-instant"
-                    for preferred in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-20b", "mixtral-8x7b-32768"]:
-                        if preferred in available_models:
-                            selected_model = preferred
-                            break
-                    
-                    prompt = f"""You are a Chief Investment Officer at a quantitative hedge fund. Analyze the following fundamentals for these stocks and pick the single BEST buy for medium-term holding.
-
-Stock Data:
-{dossier}
-
-Respond in this exact structure:
-1. THE WINNER: [Stock Name]
-2. CORE THESIS: [Clear reason why its P/E, ROE, and P/BV make it the best choice]
-3. KEY RISK: [Main vulnerability or trap]"""
-
-                    response = client.chat.completions.create(
-                        model=selected_model,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.2
-                    )
-                    
-                    st.info(f"Analyzed using active model: **{selected_model}**")
-                    st.markdown(response.choices[0].message.content)
-                    
-                except Exception as e:
-                    st.error(f"Groq API Error: {str(e)}")
+        with st.spinner("Groq LLM is crunching the metrics..."):
+            try:
+                completion = client.chat.completions.create(
+                    model="llama3-70b-8192",  # Using the powerful 70B model for deep financial reasoning
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"Here is the data:\n\n{data_payload}"}
+                    ],
+                    temperature=0.2, # Low temperature for accurate, non-hallucinated data analysis
+                )
+                
+                st.success("Analysis Complete!")
+                st.markdown(completion.choices[0].message.content)
+                
+            except Exception as e:
+                st.error(f"Groq API Error: {str(e)}")
