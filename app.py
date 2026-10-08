@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from groq import Groq
 import database as db  # Imports your custom database cache
 
-# Load environment variables (for local testing, Render handles this automatically)
+# Load environment variables
 load_dotenv()
 
 # Initialize the SQLite database table
@@ -24,12 +24,10 @@ ticker_input = str.text_input("Enter Stock Ticker (e.g., AAPL, TSLA, INFY):", ""
 
 if ticker_input:
     # AUTOMATIC NSE ROUTING: If it's a common Indian stock and missing '.NS', add it!
-    # (Feel free to type INFY or INFY.NS, it will handle both)
     formatted_ticker = ticker_input
     if not ticker_input.endswith(".NS") and ticker_input in ["INFY", "TCS", "RELIANCE", "HDFCBANK", "SBIN", "ICICIBANK", "WITHOUT_DOT_NS"]: 
         formatted_ticker = f"{ticker_input}.NS"
     elif not "." in ticker_input:
-        # Default fallback: assume any text input without a dot is NSE for your preference, except US standard ones like AAPL
         if ticker_input not in ["AAPL", "TSLA", "MSFT", "GOOG", "AMZN", "NVDA"]:
             formatted_ticker = f"{ticker_input}.NS"
 
@@ -45,7 +43,6 @@ if ticker_input:
         str.warning(f"🔄 Cache missed or expired. Fetching live data from yfinance...")
         try:
             stock = yf.Ticker(formatted_ticker)
-            # Get latest closing or current price
             todays_data = stock.history(period='1d')
             if not todays_data.empty:
                 price = todays_data['Close'].iloc[-1]
@@ -68,14 +65,13 @@ if ticker_input:
                     prompt = f"Provide a brief, 3-bullet-point summary of the recent market sentiment or outlook for the stock ticker {formatted_ticker}. The current price is around {currency_symbol}{price:.2f}."
                     
                     completion = client.chat.completions.create(
-                        model="llama-3.3-70b-specdec"
-,  # Correct, active model name
+                        model="llama-3.3-70b-versatile",  # Updated active model name
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.7,
                         max_tokens=150
                     )
                     
-                    ai_response = completion.choices.message.content
+                    ai_response = completion.choices[0].message.content  # Fixed index access
                     str.markdown("### 🤖 AI Market Insights")
                     str.write(ai_response)
                     
