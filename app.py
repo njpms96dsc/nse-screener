@@ -65,11 +65,12 @@ if ticker_input:
                     prompt = f"Provide a brief, 3-bullet-point summary of the recent market sentiment or outlook for the stock ticker {formatted_ticker}. The current price is around {currency_symbol}{price:.2f}."
                     
                     completion = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",  # Updated active model name
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.7,
-                        max_tokens=150
-                    )
+    model="llama-3.1-8b-instant",  # Highly reliable and fast active model
+    messages=[{"role": "user", "content": prompt}],
+    temperature=0.7,
+    max_tokens=150
+)
+
                     
                     ai_response = completion.choices[0].message.content  # Fixed index access
                     str.markdown("### 🤖 AI Market Insights")
