@@ -1,6 +1,6 @@
 streamlit
 yfinance
 pandas
-groq
+groq>=0.9.0
 tabulate
 python-dotenv
