@@ -44,4 +44,5 @@ def set_cached_price(ticker, price):
     ''', (ticker.upper(), price, now_str))
     conn.commit()
     conn.close()
+#
 
