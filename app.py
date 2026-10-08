@@ -57,7 +57,7 @@ if ticker_input:
                     prompt = f"Provide a brief, 3-bullet-point summary of the recent market sentiment or outlook for the stock ticker {ticker_input}. The current price is around ${price:.2f}."
                     
                     completion = client.chat.completions.create(
-                        model="llama3-8b-8192",  # Fast & reliable model
+                        model="llama-3.1-8b-instant",  # Fast & reliable model
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.7,
                         max_tokens=150
