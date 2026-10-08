@@ -1,87 +1,73 @@
-import streamlit as st
+import streamlit as str
 import yfinance as yf
-import pandas as pd
-from groq import Groq
 import os
+from dotenv import load_dotenv
+from groq import Groq
+import database as db  # Imports your custom database cache
 
-# Initialize Groq Client
-# Ensure GROQ_API_KEY is set in Render's Environment Variables
-groq_api_key = os.environ.get("GROQ_API_KEY", "")
-client = Groq(api_key=groq_api_key) if groq_api_key else None
+# Load environment variables (for local testing, Render handles this automatically)
+load_dotenv()
 
-st.set_page_config(page_title="NSE Advanced Stock Analyzer", layout="wide")
-st.title("🚀 Advanced NSE Stock Fundamental Analyzer & LLM Picker")
+# Initialize the SQLite database table
+db.init_db()
 
-# 1. Define Stock List (Easily expandable)
-NIFTY_BATCH = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "ITC.NS", "TATAMOTORS.NS", "SBIN.NS"]
+# Initialize Groq Client safely using environment variable
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-@st.cache_data(ttl=3600)  # Cache data for 1 hour to avoid yfinance rate limits
-def fetch_stock_data(tickers):
-    data_list = []
-    for ticker in tickers:
+# --- STREAMLIT UI ---
+str.title("📊 Smart Stock Insights")
+str.write("Get instant stock data powered by live cache and AI reasoning.")
+
+# User Input for Stock Ticker
+ticker_input = str.text_input("Enter Stock Ticker (e.g., AAPL, TSLA, INFY):", "").upper().strip()
+
+if ticker_input:
+    str.subheader(f"Analysis for {ticker_input}")
+    
+    # 1. Try to get price from local database cache first
+    price = db.get_cached_price(ticker_input)
+    
+    if price is not None:
+        str.info(f"💡 Fetching data from local database cache (Fresh within 15 mins).")
+    else:
+        # 2. Cache expired or missing -> Fetch from yfinance
+        str.warning(f"🔄 Cache missed or expired. Fetching live data from yfinance...")
         try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            
-            # Advanced Fundamental Metrics Extraction
-            metrics = {
-                "Ticker": ticker,
-                "Company": info.get("longName", ticker),
-                "P/E Ratio": info.get("trailingPE", None),
-                "P/B Ratio": info.get("priceToBook", None),
-                "ROE (%)": info.get("returnOnEquity", 0) * 100 if info.get("returnOnEquity") else None,
-                "Debt/Equity": info.get("debtToEquity", None),
-                "Free Cash Flow (Cr)": (info.get("freeCashflow", 0) / 10000000) if info.get("freeCashflow") else None,
-                "Dividend Yield (%)": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0,
-                "Current Price": info.get("currentPrice", None)
-            }
-            data_list.append(metrics)
+            stock = yf.Ticker(ticker_input)
+            # Get latest closing or current price
+            todays_data = stock.history(period='1d')
+            if not todays_data.empty:
+                price = todays_data['Close'].iloc[-1]
+                # Save the new price to database cache
+                db.set_cached_price(ticker_input, price)
+            else:
+                str.error("Could not find recent price data for this ticker.")
         except Exception as e:
-            st.warning(f"Error fetching {ticker}: {str(e)}")
-    return pd.DataFrame(data_list)
-
-# Load data
-st.subheader("📊 Step 1: Extracting Live Fundamental Data")
-with st.spinner("Fetching data from yfinance..."):
-    df = fetch_stock_data(NIFTY_BATCH)
-
-st.dataframe(df.style.highlight_max(axis=0, subset=["ROE (%)"]), use_container_width=True)
-
-# 2. Hard Financial Filtering Rule (Scaffolding for LLM)
-st.subheader("🎯 Step 2: Algorithmic Ranking")
-# Filter for Quality: ROE > 15% and Debt/Equity < 1.5
-filtered_df = df[(df["ROE (%)"] > 15) & (df["Debt/Equity"] < 150)].copy() if not df.empty else df
-st.write(f"Filtered down to **{len(filtered_df)}** fundamentally strong stocks for LLM Review.")
-
-# 3. Groq LLM Decision Agent
-st.subheader("🤖 Step 3: Groq AI Deep Analysis")
-
-if not client:
-    st.error("Please set your GROQ_API_KEY in Render environment variables or script.")
-else:
-    if st.button("Run Groq AI Allocation Picker"):
-        # Convert filtered data to markdown table for LLM to ingest cleanly
-        data_payload = filtered_df.to_markdown(index=False)
+            str.error(f"Error fetching data from yfinance: {e}")
+            
+    # Display the price if we successfully got it
+    if price is not None:
+        str.metric(label="Current Estimated Price", value=f"${price:,.2f}")
         
-        system_prompt = (
-            "You are an expert SEBI-registered portfolio manager analyzing Indian equities. "
-            "Evaluate the provided fundamental table. Pick the top 2 outperforming stocks based on value (P/E, P/B) "
-            "and efficiency (ROE, Free Cash Flow). Provide a crisp investment thesis for each choice."
-        )
-        
-        with st.spinner("Groq LLM is crunching the metrics..."):
-            try:
-                completion = client.chat.completions.create(
-                    model="llama3-70b-8192",  # Using the powerful 70B model for deep financial reasoning
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Here is the data:\n\n{data_payload}"}
-                    ],
-                    temperature=0.2, # Low temperature for accurate, non-hallucinated data analysis
-                )
-                
-                st.success("Analysis Complete!")
-                st.markdown(completion.choices[0].message.content)
-                
-            except Exception as e:
-                st.error(f"Groq API Error: {str(e)}")
+        # 3. Generate AI Summary using Groq
+        if client:
+            with str.spinner("🤖 AI is analyzing market sentiment..."):
+                try:
+                    prompt = f"Provide a brief, 3-bullet-point summary of the recent market sentiment or outlook for the stock ticker {ticker_input}. The current price is around ${price:.2f}."
+                    
+                    completion = client.chat.completions.create(
+                        model="llama3-8b-8192",  # Fast & reliable model
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.7,
+                        max_tokens=150
+                    )
+                    
+                    ai_response = completion.choices[0].message.content
+                    str.markdown("### 🤖 AI Market Insights")
+                    str.write(ai_response)
+                    
+                except Exception as ai_err:
+                    str.error(f"Could not load AI insights: {ai_err}")
+        else:
+            str.error("Groq API key missing. Please configure GROQ_API_KEY in your environment.")
